@@ -38,7 +38,7 @@ Reads the public HuggingFace API (no download of weights) and returns a coarse
 
 - **E** — loads as data only (safetensors/gguf, no custom code). Low-risk case.
 - **D** — non-executing weights, but runs custom code on load → go deeper.
-- **C** — pickle-family weights: opening them can run code. Hard flag.
+- **C** — pickle-family weights: opening them can run code. Hard flag → `model-eval` disassembles the pickle's actual opcodes to show what's in it.
 - **C?** — unrecognized format: fails **up** (treated as high-risk), never down.
 
 Reputation never lowers the tier. It's a triage, never a clearance.
@@ -86,13 +86,14 @@ The imported layers are mature — provenance, pickle scanning, the standards do
 | **Generation→sink tracing** | Follows whether the model's own output can reach an interpreter (`eval`, a shell, a deserializer) — the "it only outputs text" blind spot. |
 | **(format, loader) risk tier + hard ceiling** | Grades by what the artifact is *permitted* to do on load (safetensors vs. pickle vs. custom code); reputation can never lower the tier. |
 | **Three-track, un-averaged, plain-English report** | Provenance / code / instructions kept separate and never blended into one number — a decision a non-technical reader can act on, with an honest "disclaimer of opinion" when checked static-only. |
+| **Pickle-opcode scan (stdlib)** | Disassembles pickle-format weights' opcodes — flags `os`/`subprocess`/`eval` imports and `__reduce__` payloads smuggled into the weights — **without executing them**. PyTorch's zip-wrapped `data.pkl` is read cheaply, so even multi-GB weights are scanned with no download. |
 
 **Imported — don't reinvent:**
 
 | Capability | Where it comes from |
 |---|---|
 | Repo-health / provenance signals | David Vogel's `repo-scorecard` / `repo-eval` |
-| Pickle / serialization opcode scanning | route to `modelscan` / `picklescan` (mature; don't rebuild) |
+| Deeper pickle ruleset (optional) | `modelscan` / `picklescan` when present — the built-in stdlib opcode scan is the always-on floor |
 | Build provenance / signing | SLSA-style attestation checks |
 | The scoring & flag doctrine | OpenSSF / SLSA / CISA (via David's rubric lineage) |
 

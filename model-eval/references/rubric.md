@@ -23,7 +23,7 @@ collector emits a coarse tier; model-eval refines **D → A/B** using the AST to
 |---|---|---|
 | E | non-executing weights (safetensors/gguf), no custom code | may rate up to strong |
 | D | non-executing weights + custom code, **no** dangerous call-sites | static-only ceiling; residue read |
-| C | pickle-family weights (code executes on load) — route pickle check to modelscan/picklescan | hard flag; isolated use only |
+| C | pickle-family weights (code executes on load); collector runs a first-party stdlib **opcode scan** (GLOBAL imports + REDUCE), modelscan/picklescan for a deeper ruleset | hard flag; isolated use only |
 | B | custom code with in-process code-exec / deserialize sites (`eval`/`exec`/`pickle.load`/`torch.load`) | disclaimer of opinion if static-only |
 | A | custom code with code-exec **and** network/subprocess reach, or install-instructions requiring an unregistered binary | disclaimer of opinion if static-only; human read mandatory |
 | C? | unrecognized weight format — **FAIL UP** | treat as high-risk |
@@ -37,7 +37,7 @@ if it also has `network` OR `subprocess` danger → **A**. Reputation NEVER lowe
   bus factor, license, downloads (WEAK). Import; do not rebuild.
 - **ARTIFACT** — the collector's static read: import-time vs runtime danger, tainted sinks
   (generation→sink candidates), opaque authority, obfuscation, deserialize/`torch.load`,
-  seal status, plus the delegated pickle scan.
+  seal status, plus the first-party pickle **opcode scan** (the `pickle` block: dangerous GLOBAL imports + REDUCE ops, disassembled from the weights).
 - **INSTRUCTION** — enumerable documentation patterns: does the README/model card instruct
   installing an unregistered/bundled binary, disabling a check ("just set X"), or make
   unfalsifiable claims ("fully audited", "100% safe")?
@@ -51,7 +51,7 @@ Report the three separately, always.
 |---|---|---|
 | Seal + reconcile | YES | fails LOUD |
 | Format/tier detection | YES | fails LOUD (fails up on unknown) |
-| Pickle/opcode scan (delegated) | mostly YES | fails LOUD |
+| Pickle opcode scan (first-party stdlib; picklescan deeper) | mostly YES | fails LOUD |
 | AST danger-scan / tainted sinks | NO — dynamic dispatch, string-built imports, obfuscation evade it | fails SILENT |
 | LLM behavioral claim + contradiction | NO | fails SILENT |
 | Authority manifest | NO — runtime-constructed targets are opaque | fails SILENT |
@@ -62,6 +62,7 @@ code-bearing artifact always routes to a human read.
 ## 4. Hard caps (after track scoring)
 
 - pickle-family weights present → tier **C** floor; Artifact track cannot read "clean".
+- pickle opcode scan finds a dangerous GLOBAL (`os`/`subprocess`/`builtins.eval`…) or REDUCE into one (`pickle.dangerous_globals` > 0) → **CRITICAL + ADVERSE** (malicious pickle). A clean opcode read is NOT a clearance — tier C stands on format (silence ≠ safe).
 - unrecognized format → fail up.
 - `obfuscation` count > 0 → CRITICAL flag + disclaimer of opinion.
 - evidence of exfiltration / obfuscated payload / secrets in code → worst verdict (do not use).
@@ -95,7 +96,7 @@ disclosure theater.
 ## 8. Flag severities
 
 - **CRITICAL** — obfuscation, exfiltration/secrets, tainted `eval`/`exec` on model output,
-  pickle in a "trusted" artifact, typosquat/impersonation, seal drift under a stable revision.
+  pickle in a "trusted" artifact or a dangerous pickle opcode (GLOBAL into os/subprocess/eval, REDUCE), typosquat/impersonation, seal drift under a stable revision.
 - **WARNING** — code-exec/deserialize sinks, bus factor 1, no license, no security policy,
   opaque-authority over budget, unverifiable maintainer.
 - **CAUTION** — sparse docs, no signed releases/attestation, Provenance-only signals, low tests.

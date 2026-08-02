@@ -41,7 +41,7 @@ clears** it — a live custom-code surface always routes to a scoped human read.
    Returns typed JSON: `tier`, `format`, `custom_code` (+ `custom_code_signals`),
    `seal.manifest_sha256`, `code_files_scanned`, `ast.per_file[]` (each with `danger`
    sites tagged `scope: module|function`, `authority`, tainted `sinks`, `imports`,
-   `obfuscation`, `parse_error`), `ast.totals`, `provenance`. It downloads only
+   `obfuscation`, `parse_error`), `ast.totals`, `pickle` (opcode scan of pickle-family weights), `provenance`. It downloads only
    code/text (never weights); in LOCAL mode it reads the folder and computes the seal
    from your local files. The analysis is identical in both modes — only the seal
    (local file hashes) and `provenance` (a folder has no hub metadata) differ.
@@ -90,7 +90,18 @@ clears** it — a live custom-code surface always routes to a scoped human read.
    indirection) — a high fraction means "unmeasurable for this artifact", which feeds
    the rubric's aggregation rule, **not** "no chains found".
 
-9. **Score per `references/rubric.md`.** Tier ceiling; three unfused tracks; hard caps;
+9. **Pickle opcode read (tier C).** When `format.pickle_family` is set, read the
+   collector's `pickle` block. In LOCAL mode it disassembles each pickle weight's opcodes
+   (stdlib `pickletools`, executes nothing; PyTorch's zip-wrapped `data.pkl` read cheaply):
+   `pickle.dangerous_globals` counts GLOBAL imports into dangerous modules
+   (`os`/`subprocess`/`builtins.eval`…) and `pickle.reduce_ops` counts REDUCE/BUILD.
+   `verdict: DANGEROUS_OPCODES` → **ADVERSE** (a weight that runs code on load). A clean
+   read (`dangerous_globals: 0`) does NOT clear it — tier C stands on format, silence ≠
+   safe. In HF mode (`scan_mode: hf-not-scanned`) weights aren't downloaded — route the
+   user to pull + re-run LOCAL, or run picklescan/modelscan. If a `safetensors` sibling
+   exists (`format.safetensors`), tell the user to prefer it and skip the pickle entirely.
+
+10. **Score per `references/rubric.md`.** Tier ceiling; three unfused tracks; hard caps;
    adverse inference for the uninspectable remainder (empty `provenance.attestation_files`
    feeds this); aggregation→escalation; audit-opinion top-line. Every claim traces to a
    collected signal; a missing signal scores at an explicit midpoint with an uncertainty
@@ -99,7 +110,7 @@ clears** it — a live custom-code surface always routes to a scoped human read.
    which makes the Artifact track do the work, and adverse inference still bites on
    unreadable weights.
 
-10. **Produce the Report** (below). It leads in plain English — decision first, anyone
+11. **Produce the Report** (below). It leads in plain English — decision first, anyone
     can read it — and keeps the full evidence beneath for a developer. If a
     code-execution-tier (A/B/C) artifact was evaluated **static-only** (the
     declared-vs-exercised differential is v2 and was not run), the verdict is
@@ -154,9 +165,11 @@ For a fast "should I even look at this?" in chat, collapse to one line:
 - **Agreement is not corroboration.** Every static mechanism shares the read-the-source
   blind spot. Only a deterministic contradiction or an inter-method disagreement is
   high-signal; a clean multi-mechanism report still routes to a human read.
-- **Import, don't rebuild.** Pickle/opcode scanning → `modelscan`/`picklescan`;
-  provenance attestation → SLSA-style checks; repo-health → `repo-scorecard`. This
-  skill owns the claim-contradiction engine and the presentation discipline, not those.
+- **Import, don't rebuild.** Provenance attestation → SLSA-style checks; repo-health →
+  `repo-scorecard`. Pickle opcode triage is **first-party** (stdlib `pickletools`: a
+  GLOBAL/REDUCE flag that executes nothing) — `modelscan`/`picklescan` remain the deeper
+  maintained ruleset when you want it, not reimplemented here. This skill owns the
+  claim-contradiction engine and the presentation discipline.
 - **Honest ceiling.** This is a negligence detector with an adversary-shaped ceiling —
   it reliably catches sloppy/negligent code and raises attacker cost, but a targeted,
   evaluator-aware adversary needs the (v2) differential. Never a clearance.

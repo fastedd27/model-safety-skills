@@ -50,9 +50,9 @@ else
   hf_get 20 "https://huggingface.co/$REPO/resolve/main/config.json" > "$TMP/config.json" 2>/dev/null || true
 fi
 
-REPO="$REPO" python3 - "$TMP" <<'PY'
-import ast, json, os, sys, hashlib, re
-tmp=sys.argv[1]; repo=os.environ.get("REPO","")
+REPO="$REPO" LOCAL_DIR="${MAE_LOCAL_DIR:-}" python3 - "$TMP" <<'PY'
+import ast, json, os, sys, hashlib, re, io, zipfile, pickletools
+tmp=sys.argv[1]; repo=os.environ.get("REPO",""); LOCAL_DIR=os.environ.get("LOCAL_DIR","")
 def load(p,d):
     try: return json.load(open(p))
     except Exception: return d
@@ -80,6 +80,80 @@ if PICKLE: tier="C"
 elif not (SAFE or GGUF or PICKLE): tier="C?"
 elif custom: tier="D"
 else: tier="E"
+
+# ---- pickle opcode scan (stdlib pickletools; disassembles, executes NOTHING) ----
+PICK_SCAN_EXT=(".bin",".pt",".pth",".ckpt",".pkl",".pickle")
+DANGER_MOD={"os","posix","nt","subprocess","sys","builtins","__builtin__","socket",
+            "shutil","importlib","pty","commands","ctypes","platform","webbrowser",
+            "runpy","code","multiprocessing","operator"}
+DANGER_NAME={("builtins","eval"),("builtins","exec"),("builtins","__import__"),
+             ("builtins","compile"),("builtins","getattr"),("__builtin__","eval"),
+             ("__builtin__","exec"),("__builtin__","__import__")}
+RAW_CAP=32*1024*1024
+def _pk_danger(mod,name):
+    if (mod,name) in DANGER_NAME: return True
+    return mod.split(".")[0] in DANGER_MOD
+def _pk_stream(data):
+    r={"opcodes":0,"globals":[],"reduce":0,"error":None}; last=[]
+    try:
+        for op,arg,pos in pickletools.genops(io.BytesIO(data)):
+            r["opcodes"]+=1; nm=op.name
+            if nm in ("SHORT_BINUNICODE","BINUNICODE","BINUNICODE8","UNICODE","SHORT_BINSTRING","BINSTRING"):
+                if isinstance(arg,(str,bytes)):
+                    last.append(arg.decode("utf-8","replace") if isinstance(arg,bytes) else arg); last=last[-2:]
+            elif nm=="GLOBAL":
+                a=arg or ""
+                mod,name=(a.split("\n",1) if "\n" in a else list(a.partition(" ")[::2]))
+                r["globals"].append([mod,name])
+            elif nm=="STACK_GLOBAL":
+                r["globals"].append([last[-2],last[-1]] if len(last)>=2 else ["<stack>","?"])
+            elif nm in ("REDUCE","BUILD","INST","OBJ","NEWOBJ","NEWOBJ_EX"):
+                r["reduce"]+=1
+    except Exception as e:
+        r["error"]=str(e)[:140]
+    return r
+def _pk_file(path):
+    res={"file":None,"kind":None,"opcodes":0,"reduce":0,"dangerous":[],"note":None}; streams=[]
+    try:
+        if zipfile.is_zipfile(path):
+            res["kind"]="torch-zip"; zf=zipfile.ZipFile(path)
+            ents=[n for n in zf.namelist() if os.path.basename(n)=="data.pkl" or n.lower().endswith(".pkl")]
+            if not ents: res["note"]="zip archive with no .pkl entry"
+            for n in ents[:6]:
+                try: streams.append(_pk_stream(zf.read(n)))
+                except Exception as e: res["note"]=f"zip entry read failed: {str(e)[:60]}"
+        else:
+            res["kind"]="raw-pickle"; sz=os.path.getsize(path)
+            with open(path,"rb") as fh: data=fh.read(RAW_CAP)
+            if sz>RAW_CAP: res["note"]=f"raw pickle {sz}B > cap; scanned head only (partial)"
+            streams.append(_pk_stream(data))
+    except Exception as e:
+        res["note"]=f"open failed: {str(e)[:80]}"; return res
+    for s in streams:
+        res["opcodes"]+=s["opcodes"]; res["reduce"]+=s["reduce"]
+        for mod,name in s["globals"]:
+            if _pk_danger(mod,name): res["dangerous"].append([mod,name])
+    return res
+
+pickle_paths=[p for p in paths if p.lower().endswith(PICK_SCAN_EXT)]
+pk={"present":bool(PICKLE),"weight_files":pickle_paths,"scan_mode":None,
+    "scanned":[],"dangerous_globals":0,"reduce_ops":0,"verdict":None,"note":None}
+if PICKLE and LOCAL_DIR and pickle_paths:
+    pk["scan_mode"]="local-stdlib-opcode"
+    for rel in pickle_paths[:12]:
+        fp=os.path.join(LOCAL_DIR,rel)
+        if not os.path.exists(fp): continue
+        r=_pk_file(fp); r["file"]=rel; pk["scanned"].append(r)
+    if len(pickle_paths)>12: pk["note"]=f"{len(pickle_paths)} pickle files; scanned first 12"
+    pk["dangerous_globals"]=sum(len(r["dangerous"]) for r in pk["scanned"])
+    pk["reduce_ops"]=sum(r["reduce"] for r in pk["scanned"])
+    pk["verdict"]=("DANGEROUS_OPCODES" if pk["dangerous_globals"]>0 else "no dangerous opcodes at static read — NOT a clearance")
+elif PICKLE and LOCAL_DIR:
+    pk["scan_mode"]="local-no-native-pickle"
+    pk["note"]="pickle-family format present but no native pickle stream (.bin/.pt/.pkl) to disassemble (e.g. .h5/.msgpack) — tier C stands on format"
+elif PICKLE:
+    pk["scan_mode"]="hf-not-scanned"
+    pk["note"]="pickle weights not downloaded in HF mode (collector never downloads weights); pull the model and re-run with MAE_LOCAL_DIR, or run picklescan/modelscan, to read the opcodes"
 
 CATS=[("network", re.compile(r'(^|\.)(socket|requests|urllib|urlopen|httpx|aiohttp|ftplib|telnetlib)(\.|$)')),
       ("subprocess", re.compile(r'(^|\.)(subprocess|popen|system|spawn)(\.|$)|^os\.(system|popen|exec)')),
@@ -159,6 +233,7 @@ out={"repo":repo,"revision":info.get("sha"),"tier":tier,
      "seal":{"file_count":len(man),"manifest_sha256":manifest_sha256,"partial_sealed":partial_sealed},
      "code_files_scanned":[r["file"] for r in per_file],
      "ast":{"per_file":per_file,"totals":tot},
+     "pickle":pk,
      "provenance":prov,
      "collector_note":"Static only. No artifact code executed. Absence of a signal is not evidence of safety."}
 print(json.dumps(out,indent=2))

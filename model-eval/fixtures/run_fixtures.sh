@@ -35,6 +35,20 @@ mkdir -p "$F/pickle_weight"
 printf 'class M: pass\n' > "$F/pickle_weight/modeling_pk.py"
 : > "$F/pickle_weight/pytorch_model.bin"
 
+# real pickle streams — benign vs. a __reduce__ -> os.system payload.
+# GENERATED here, NEVER loaded; the collector only disassembles opcodes (pickletools), never unpickles.
+python3 - "$F/pickle_benign" "$F/pickle_malicious" <<'PYGEN'
+import os,sys,pickle
+benign,mal=sys.argv[1],sys.argv[2]
+os.makedirs(benign,exist_ok=True); os.makedirs(mal,exist_ok=True)
+with open(os.path.join(benign,"weights.pkl"),"wb") as f:
+    pickle.dump({"w":[1,2,3],"name":"benign","nested":{"a":1}}, f)
+class _Exploit:
+    def __reduce__(self): return (os.system, ("echo pwned",))
+with open(os.path.join(mal,"weights.pkl"),"wb") as f:
+    pickle.dump(_Exploit(), f)
+PYGEN
+
 pass=0; fail=0
 check(){ local dir="$1" filt="$2" exp="$3" label="$4" got
   got=$(MAE_LOCAL_DIR="$F/$dir" bash "$COL" "$dir" 2>/dev/null | jq -r "$filt")
@@ -58,5 +72,14 @@ check incidental '.custom_code' false "custom_code=false"
 check incidental '.ast.totals.tainted_sinks>=1' true "sink still reported"
 echo "pickle_weight — pickle-format weights:"
 check pickle_weight '.tier' C "tier C"
+echo "pickle_benign — real benign pickle stream (opcode scan finds nothing):"
+check pickle_benign '.tier' C "tier C"
+check pickle_benign '.pickle.scanned|length>=1' true "pickle actually opcode-scanned"
+check pickle_benign '.pickle.dangerous_globals' 0 "no dangerous opcodes"
+echo "pickle_malicious — __reduce__ -> os.system smuggled into weights:"
+check pickle_malicious '.tier' C "tier C"
+check pickle_malicious '.pickle.dangerous_globals>=1' true "dangerous GLOBAL flagged"
+check pickle_malicious '.pickle.reduce_ops>=1' true "REDUCE opcode present"
+check pickle_malicious '.pickle.verdict' DANGEROUS_OPCODES "verdict = DANGEROUS_OPCODES"
 
 echo ""; echo "RESULT: $pass passed, $fail failed"; [ "$fail" -eq 0 ]
