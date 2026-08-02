@@ -18,11 +18,22 @@ if [ -n "${MAE_LOCAL_DIR:-}" ]; then
   D="$MAE_LOCAL_DIR"
   python3 - "$D" > "$TMP/tree.json" <<'PYT'
 import os,sys,json,hashlib
-d=sys.argv[1]; out=[]
+d=sys.argv[1]; out=[]; TH=64*1024*1024
+def _sha(p,size):
+    h=hashlib.sha256()
+    if size<=TH:
+        with open(p,'rb') as fh:
+            for c in iter(lambda: fh.read(1048576), b''): h.update(c)
+        return h.hexdigest(), False
+    with open(p,'rb') as fh:
+        head=fh.read(1048576); fh.seek(max(0,size-1048576)); tail=fh.read(1048576)
+    h.update(head); h.update(tail); h.update(str(size).encode())
+    return h.hexdigest(), True
 for root,_,files in os.walk(d):
     for f in files:
         p=os.path.join(root,f); rel=os.path.relpath(p,d).replace(os.sep,"/")
-        out.append({"type":"file","path":rel,"oid":hashlib.sha256(open(p,'rb').read()).hexdigest(),"size":os.path.getsize(p)})
+        size=os.path.getsize(p); oid,partial=_sha(p,size)
+        out.append({"type":"file","path":rel,"oid":oid,"size":size,"partial_seal":partial})
 print(json.dumps(out))
 PYT
   echo '{"tags":[],"siblings":[]}' > "$TMP/info.json"
@@ -54,6 +65,7 @@ for e in tree:
     sha=(e.get("lfs") or {}).get("oid") or e.get("oid") or ""
     man.append((e.get("path",""), sha))
 man.sort()
+partial_sealed=sum(1 for e in tree if isinstance(e,dict) and e.get("partial_seal"))
 manifest_sha256=hashlib.sha256("\n".join(f"{p}\t{s}" for p,s in man).encode()).hexdigest()
 
 low=[p.lower() for p in paths]
@@ -144,7 +156,7 @@ prov={"license": (info.get("cardData") or {}).get("license") or next((t.split(":
 out={"repo":repo,"revision":info.get("sha"),"tier":tier,
      "format":{"safetensors":int(SAFE),"gguf":int(GGUF),"pickle_family":int(PICKLE)},
      "custom_code":bool(custom),"custom_code_signals":{"tag":"custom_code" in tags,"auto_map":automap,"modeling_py":modeling_py},
-     "seal":{"file_count":len(man),"manifest_sha256":manifest_sha256},
+     "seal":{"file_count":len(man),"manifest_sha256":manifest_sha256,"partial_sealed":partial_sealed},
      "code_files_scanned":[r["file"] for r in per_file],
      "ast":{"per_file":per_file,"totals":tot},
      "provenance":prov,

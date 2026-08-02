@@ -106,7 +106,7 @@ clears** it — a live custom-code surface always routes to a scoped human read.
     **DISCLAIMER OF OPINION**: the tool refuses a confidence-bearing rating. Close with
     the **residue-scoped human-read handoff**: the contradiction list, the
     opaque-authority list, and the unverified-claims list — full read on first sight,
-    diff-scoped against `seal.manifest_sha256` on updates.
+    diff-scoped against `seal.manifest_sha256` on updates. When `seal.partial_sealed` > 0, say so plainly — large local weight files are sealed by size + a partial (first/last-1MB) hash, not a full byte-for-byte hash.
 
 ## Output — the Report (default)
 

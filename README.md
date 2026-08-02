@@ -75,10 +75,19 @@ Two rules keep it honest:
   only checked from the outside, the verdict is an honest **"disclaimer of opinion"**
   ("not cleared" — not "dangerous," not "safe"), never a green light.
 
-## What it builds vs. what it imports (don't reinvent)
+## What's new here vs. what it imports (don't reinvent)
 
-The genuinely new parts are the **claim-vs-code contradiction check** and the
-**plain-English, un-averaged presentation.** Everything else is imported:
+The imported layers are mature — provenance, pickle scanning, the standards doctrine. What's **new here** is the machinery a repo-health tool can't do:
+
+| Built here (new) | What it does |
+|---|---|
+| **Claim-vs-code contradiction check** | The model writes a description of what the code does; a deterministic scan of the actual call graph then tries to catch that description *lying*. The signal is the contradiction — never the model's say-so. |
+| **Dual-pass claim** (with vs. without comments) | Reads the code twice — once trusting its prose, once ignoring it — and treats divergence as a finding. Catches code that *briefs* the reviewer, not just hides from it. |
+| **Generation→sink tracing** | Follows whether the model's own output can reach an interpreter (`eval`, a shell, a deserializer) — the "it only outputs text" blind spot. |
+| **(format, loader) risk tier + hard ceiling** | Grades by what the artifact is *permitted* to do on load (safetensors vs. pickle vs. custom code); reputation can never lower the tier. |
+| **Three-track, un-averaged, plain-English report** | Provenance / code / instructions kept separate and never blended into one number — a decision a non-technical reader can act on, with an honest "disclaimer of opinion" when checked static-only. |
+
+**Imported — don't reinvent:**
 
 | Capability | Where it comes from |
 |---|---|
