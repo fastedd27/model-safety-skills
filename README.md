@@ -96,6 +96,16 @@ The imported layers are mature — provenance, pickle scanning, the standards do
 | Build provenance / signing | SLSA-style attestation checks |
 | The scoring & flag doctrine | OpenSSF / SLSA / CISA (via David's rubric lineage) |
 
+## Requirements
+
+Both skills are pure shell — no install, no accounts, no SaaS. You need:
+
+- `bash`, `curl`, `jq`, and `python3` (standard library only)
+- Network access for the HuggingFace API (`model-scorecard`, and `model-eval` in HF mode)
+
+Optional: set `HF_TOKEN` to raise API rate limits or reach gated/private repos.
+`model-eval` also runs fully offline against a local model folder via `MAE_LOCAL_DIR`.
+
 ## Try it
 
 ```bash
@@ -110,8 +120,6 @@ MAE_LOCAL_DIR=/path/to/model-folder model-eval/scripts/collect_signals.sh my-loc
 # the falsifiability floor — offline, no network:
 bash model-eval/fixtures/run_fixtures.sh     # 11 seeded checks; must be green
 ```
-
-Optional: set `HF_TOKEN` in the environment for higher API rate limits (never required).
 
 ## Roadmap (v2)
 
